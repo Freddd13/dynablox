@@ -1,7 +1,7 @@
 ![Ubuntu 20.04 + ROS Noetic: Build](https://github.com/ethz-asl/dynablox/actions/workflows/build_test_20.yml/badge.svg)
 
 # Dynablox
-A volumetric mapping-based approach for real-time detection of diverse dynamic objects in complex environments.
+An online volumetric mapping-based approach for real-time detection of diverse dynamic objects in complex environments.
 
 
 <p align="center">
@@ -11,6 +11,7 @@ A volumetric mapping-based approach for real-time detection of diverse dynamic o
 # Table of Contents
 **Credits**
 * [Paper](#Paper)
+* [Video](#Video)
 
 **Setup**
 * [Installation](#Installation)
@@ -24,12 +25,12 @@ A volumetric mapping-based approach for real-time detection of diverse dynamic o
 # Paper
 If you find this package useful for your research, please consider citing our paper:
 
-* Lukas Schmid, Olov Andersson, Aurelio Sulser, Patrick Pfreundschuh, and Roland Siegwart. "**Dynablox: Real-time Detection of Diverse Dynamic Objects in Complex Environments**" in *ArXiv Preprint*, 2023.
+* Lukas Schmid, Olov Andersson, Aurelio Sulser, Patrick Pfreundschuh, and Roland Siegwart. "**Dynablox: Real-time Detection of Diverse Dynamic Objects in Complex Environments**" in *ArXiv Preprint*, 2023. \[ [ArXiv](https://arxiv.org/abs/2304.10049) | [Video](https://www.youtube.com/watch?v=NA13fRWlqRQ) \]
   ```bibtex
   @inproceedings{schmid2023dynablox,
     title={Dynablox: Real-time Detection of Diverse Dynamic Objects in Complex Environments},
     author={Schmid, Lukas, and Andersson, Olov, and Sulser, Aurelio, and Pfreundschuh, Patrick, and Siegwart, Roland},
-    booktitle={ArXiv Preprint},
+    booktitle={ArXiv Preprint 2304.10049},
     year={2023},
     volume={},
     number={},
@@ -37,8 +38,16 @@ If you find this package useful for your research, please consider citing our pa
     doi={}}
   }
   ```
+  
+## Video
+A brief overview of the problem, approach, and results is available on youtube:
+[<img src=https://user-images.githubusercontent.com/36043993/233706937-1ccd0c03-d86b-4e4f-ad47-48c38e8a7f8d.png alt="Dynablox Youtube Video">](https://www.youtube.com/watch?v=NA13fRWlqRQ)
+
 
 # Setup
+
+There is a [docker image](https://hub.docker.com/repository/docker/zhangkin/dynablox/general) available for this package. Check the usage in the dockerhub page.
+
 ## Installation
 
 * **Note on Versioning:** This package was developed using Ubuntu 20.04 using ROS Noetic. Other versions should also work but support can not be guaranteed.
