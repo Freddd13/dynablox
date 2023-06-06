@@ -48,6 +48,8 @@ void Tracking::trackClusterIDs(const Cloud& cloud, Clusters& clusters) {
     int current_id;
   };
 
+
+  // 每个cluster 都要和之前的所有cluster进行距离计算，所以是vec<vec<Association>>
   std::vector<std::vector<Association>> distances(previous_centroids_.size());
   for (size_t i = 0; i < previous_centroids_.size(); ++i) {
     std::vector<Association>& d = distances[i];

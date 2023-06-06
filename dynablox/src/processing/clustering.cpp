@@ -40,21 +40,29 @@ Clusters Clustering::performClustering(
     const ClusterIndices& occupied_ever_free_voxel_indices,
     const int frame_counter, const Cloud& cloud, CloudInfo& cloud_info) const {
   // Cluster all occupied voxels.
+  // 通过occupied_ever_free_voxel_indices做种子进行voxel区域生长，得到每个cluster可能的voxel
   const std::vector<ClusterIndices> voxel_cluster_indices =
       voxelClustering(occupied_ever_free_voxel_indices, frame_counter);
 
   // Group points into clusters.
+  // 进一步找到cluster中的具体点索引和各voxel中心？
   Clusters clusters = inducePointClusters(point_map, voxel_cluster_indices);
+
+  // 现在已经有了clusters，计算下包围框。有两种方式，一种是逐点，另一种是用之前的voxel center粗略计算（
+  // 值得注意的是，后者还减去了voxel的一半以更好的表示min max)
   for (Cluster& cluster : clusters) {
     computeAABB(cloud, cluster);
   }
 
+  // 合并已有聚类，这是我之前就想做的事，可以参考。里面判断依据，见内部注释
   // Merge close Clusters.
   mergeClusters(cloud, clusters);
 
+  // 根据聚类数量过滤
   // Apply filters to remove spurious clusters.
   applyClusterLevelFilters(clusters);
 
+  // 标记聚类中点的cluster_level 动态标志为true
   // Label all remaining points as dynamic.
   setClusterLevelDynamicFlagOfallPoints(clusters, cloud_info);
   return clusters;
@@ -157,7 +165,7 @@ Clusters Clustering::inducePointClusters(
       if (voxel_it == voxel_map.end()) {
         continue;
       }
-
+      // TODO: Why center????
       // Add the voxel.
       const voxblox::Point center = voxblox::getCenterPointFromGridIndex(
           voxblox::getGlobalVoxelIndexFromBlockAndVoxelIndex(
@@ -222,6 +230,7 @@ void Clustering::computeAABB(const Cloud& cloud, Cluster& cluster) const {
 }
 
 void Clustering::mergeClusters(const Cloud& cloud, Clusters& clusters) const {
+  // 合并确认0 如果没设定最小cluster间距，或者cluster数量小于2，直接返回
   if (config_.min_cluster_separation <= 0.f || clusters.size() < 2u) {
     return;
   }
@@ -233,6 +242,7 @@ void Clustering::mergeClusters(const Cloud& cloud, Clusters& clusters) const {
     while (true) {
       Cluster& second_cluster = clusters[second_id];
 
+      // 合并确认1，要求AABB有一定重叠
       // Ignore clusters that are far apart.
       if (!first_cluster.aabb.intersects(second_cluster.aabb,
                                          config_.min_cluster_separation)) {
@@ -243,6 +253,7 @@ void Clustering::mergeClusters(const Cloud& cloud, Clusters& clusters) const {
         continue;
       }
 
+      // 合并确认2，要求一个cluster至少有一个点/voxel与另一个cluster所有点/voxel的距离都小于阈值
       // Compute minimum distance between all points in both clusters.
       bool distance_met = false;
       if (config_.check_cluster_separation_exact) {
@@ -278,6 +289,8 @@ void Clustering::mergeClusters(const Cloud& cloud, Clusters& clusters) const {
         }
       }
 
+
+      /////////////// perform merging //////////////
       // Merge clusters if necessary.
       if (distance_met) {
         first_cluster.points.insert(first_cluster.points.end(),

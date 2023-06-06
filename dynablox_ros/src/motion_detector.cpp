@@ -148,12 +148,16 @@ void MotionDetector::pointcloudCallback(
   preprocessing_->processPointcloud(msg, T_M_S, cloud, cloud_info);
   preprocessing_timer.Stop();
 
+
   // Build a mapping of all blocks to voxels to points for the scan.
+  // Hatori: 通过将本帧点云投影到tsdf体素中，得到占据的block->voxel->point的映射地图pointmap，
+  // 和由free-->occ的各block->voxel映射
   Timer setup_timer("motion_detection/indexing_setup");
   BlockToPointMap point_map;
   std::vector<voxblox::VoxelKey> occupied_ever_free_voxel_indices;
   setUpPointMap(cloud, point_map, occupied_ever_free_voxel_indices, cloud_info);
   setup_timer.Stop();
+
 
   // Clustering.
   Timer clustering_timer("motion_detection/clustering");
@@ -221,6 +225,50 @@ bool MotionDetector::lookupTransform(const std::string& target_frame,
   return true;
 }
 
+
+/////// Hatori
+// 1.BlockToPointMap为自定义的voxblox::AnyIndexHashMapType<VoxelToPointMap>::type;
+// AnyIndexHashMapType则为自定义的std::unordered_map<IndexType, ValueType>;
+// key为Eigen3d(XYZ)，voxel,block等都是一个E3d,值就是模板参数ValueType
+
+// BlockToPointMap实际为std::unordered_map<voxblox::BlockIndex, VoxelToPointMap>
+// 将block index映射到VoxelToPointMap，VoxelToPointMap为std::unordered_map<voxblox::VoxelIndex, std::vector<voxblox::Point>>
+// 将voxel index映射到std::vector<voxblox::Point>
+// 也就是说，一个block对应多个voxel，一个voxel对应多个点，一个block对应多个点
+
+// example:
+// 比如索引一个Block，可以得到其中voxel的map，再对voxel索引，可以得到voxel中的vector
+// 这个模板参数VoxelToPointMap为将voxel index 映射到其包含点的 std::vector<pointindice>，pointindice为点的索引，即size_t
+
+// 2. voxblox::VoxelKey为std::pair<BlockIndex, VoxelIndex>;
+// 将两种体素索引放到一个vector里面，作为occupied_ever_free_voxel_indices，这样可以同时找到block和voxel
+
+// 3. HierarchicalIndexIntMap也是一个map，将索引映射到点(size_t)
+
+// 4. cloudinfo：   bool has_labels = false; std::uint64_t timestamp; 
+//    Point sensor_position; std::vector<PointInfo> points;
+// 5. PointInfo
+// Additional information stored for every point in the cloud.
+// struct PointInfo {
+//   // Include this point when computing performance metrics.
+//   bool ready_for_evaluation = false;
+
+//   // Set to true if the point falls into a voxel labeled ever-free.
+//   bool ever_free_level_dynamic = false;
+
+//   // Set to true if the point belongs to a cluster labeled dynamic.
+//   bool cluster_level_dynamic = false;
+
+//   // Set to true if the point belongs to a tracked object.
+//   bool object_level_dynamic = false;
+
+//   // Distance of the point to the sensor.
+//   double distance_to_sensor = -1.0;
+
+//   // Ground truth label if available.
+//   bool ground_truth_dynamic = false;
+// };
+
 void MotionDetector::setUpPointMap(
     const Cloud& cloud, BlockToPointMap& point_map,
     std::vector<voxblox::VoxelKey>& occupied_ever_free_voxel_indices,
@@ -228,19 +276,29 @@ void MotionDetector::setUpPointMap(
   // Identifies for any LiDAR point the block it falls in and constructs the
   // hash-map block2points_map mapping each block to the LiDAR points that
   // fall into the block.
+
+  // Hatori: 先将点云中的点映射到*tsdf*_block中 得到(map<tsdf_block_idx, vec<indices>>)
   const voxblox::HierarchicalIndexIntMap block2points_map =
       buildBlockToPointsMap(cloud);
 
   // Builds the voxel2point-map in parallel blockwise.
   std::vector<BlockIndex> block_indices(block2points_map.size());
   size_t i = 0;
+  // 只存有点落入的block index到vector中
   for (const auto& block : block2points_map) {
     block_indices[i] = block.first;
     ++i;
   }
+
+  // 对每个有点的block，向更细致的voxel构建map
   IndexGetter<BlockIndex> index_getter(block_indices);
   std::vector<std::future<void>> threads;
   std::mutex aggregate_results_mutex;
+  /*
+    这里可以多线程是因为每个线程处理的 block 是不同的，所以不会出现两个线程同时操作一个 block 的情况。
+    具体来说，这里使用了一个 IndexGetter 对 block 进行了分配，每个线程从 IndexGetter 中获取一个 block 进行处理，
+    直到所有 block 都被处理完毕。因此，每个线程处理的 block 是不同的，不会出现冲突。
+  */
   for (int i = 0; i < config_.num_threads; ++i) {
     threads.emplace_back(std::async(std::launch::async, [&]() {
       // Data to store results.
@@ -251,18 +309,23 @@ void MotionDetector::setUpPointMap(
       // Process until no more blocks.
       while (index_getter.getNextIndex(&block_index)) {
         VoxelToPointMap result;
+        // Hatori: 得到result，即tsdf_voxel_index到点索引vector的map
         this->blockwiseBuildPointMap(cloud, block_index,
                                      block2points_map.at(block_index), result,
                                      local_occupied_indices, cloud_info);
         local_point_map.insert(std::pair(block_index, result));
+        // Hatori: 所以local_point_map是 map<tsdf_block_index, map<tsdf_voxel_index, point_indices>>
       }
 
       // After processing is done add data to the output map.
       std::lock_guard<std::mutex> lock(aggregate_results_mutex);
+      //Hatori: vec<pair<block_idx, voxel_indices> > ok
       occupied_ever_free_voxel_indices.insert(
           occupied_ever_free_voxel_indices.end(),
           local_occupied_indices.begin(), local_occupied_indices.end());
-      point_map.merge(local_point_map);
+      point_map.merge(local_point_map); 
+      // Hatori: 多线程结束后，得到各local_point_map合并的global map
+      // global: --curr_occ_block_index--> a map<> --curr_occ_voxel_index--> point_indices 
     }));
   }
 
@@ -286,12 +349,22 @@ voxblox::HierarchicalIndexIntMap MotionDetector::buildBlockToPointsMap(
   return result;
 }
 
+
+// TODO tsdf到底是个啥东西
 void MotionDetector::blockwiseBuildPointMap(
     const Cloud& cloud, const BlockIndex& block_index,
     const voxblox::AlignedVector<size_t>& points_in_block,
     VoxelToPointMap& voxel_map,
     std::vector<voxblox::VoxelKey>& occupied_ever_free_voxel_indices,
     CloudInfo& cloud_info) const {
+
+  /* Hatori
+    根据输入的tsdf block index获取相应的block指针，然后对该block中的每个点，找到其voxel_index(并确认voxel有效)。
+    如果这个tsdf voxel是ever_free的，那么就将这个点标记为ever_free_level_dynamic
+    并将tsdf voxel index作为key,将这个点的index作为value的一个元素存入voxel_map中
+    所以voxel_map是 map<key:tsdf_voxel_index, value:point_indices>
+  */
+
   // Get the block.
   TsdfBlock::Ptr tsdf_block = tsdf_layer_->getBlockPtrByIndex(block_index);
   if (!tsdf_block) {
@@ -316,19 +389,24 @@ void MotionDetector::blockwiseBuildPointMap(
     }
   }
 
+  /*  Hatori
+    对整理完的tsdf_block的 voxel_map，记录占据voxel的frame_counter_, 初始化聚类标志
+    如果voxel曾是free的，则将其加入occupied_ever_free_voxel_indices，因为free-->occ，这个voxel可能是动态的
+  */
+
   // Update the voxel status of the currently occupied voxels.
   for (const auto& voxel_points_pair : voxel_map) {
     TsdfVoxel& tsdf_voxel =
         tsdf_block->getVoxelByVoxelIndex(voxel_points_pair.first);
-    tsdf_voxel.last_lidar_occupied = frame_counter_;
+    tsdf_voxel.last_lidar_occupied = frame_counter_;  //Hatroi: 似乎是对应论文中记录最近一次占据，这里用frame number记录
 
     // This voxel attribute is used in the voxel clustering method: it
     // signalizes that a currently occupied voxel has not yet been clustered
-    tsdf_voxel.clustering_processed = false;
+    tsdf_voxel.clustering_processed = false;  //Hatori: 此时还没有聚类
 
     // The set of occupied_ever_free_voxel_indices allows for fast access of
     // the seed voxels in the voxel clustering
-    if (tsdf_voxel.ever_free) {
+    if (tsdf_voxel.ever_free) { //Hatori: free-->occ的voxel可能是动态的, 记录下来大小index
       occupied_ever_free_voxel_indices.push_back(
           std::make_pair(block_index, voxel_points_pair.first));
     }
