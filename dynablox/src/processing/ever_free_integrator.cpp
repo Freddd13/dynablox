@@ -57,6 +57,7 @@ void EverFreeIntegrator::updateEverFreeVoxels(const int frame_counter) const {
   IndexGetter<BlockIndex> index_getter(indices);
   std::vector<std::future<void>> threads;
   Timer remove_timer("update_ever_free/remove_occupied");
+  // Hatori：同理的多线程处理，最后汇总出稳定的voxel，以后不再处理减少计算量
   for (int i = 0; i < config_.num_threads; ++i) {
     threads.emplace_back(std::async(std::launch::async, [&]() {
       BlockIndex index;
@@ -83,6 +84,7 @@ void EverFreeIntegrator::updateEverFreeVoxels(const int frame_counter) const {
   }
 
   // Remove the remaining voxels single threaded.
+  // Hatori: 所谓的remove，只是不再给ever_free 并清除dynamic
   for (const auto& voxel_key : voxels_to_remove) {
     TsdfBlock::Ptr tsdf_block =
         tsdf_layer_->getBlockPtrByIndex(voxel_key.first);
@@ -100,6 +102,7 @@ void EverFreeIntegrator::updateEverFreeVoxels(const int frame_counter) const {
   index_getter.reset();
   threads.clear();
   Timer label_timer("update_ever_free/label_free");
+  // Hatori： 以block为单位遍历其中voxel，更新能新改变为everfree的voxel的标志，规则内详
   for (int i = 0; i < config_.num_threads; ++i) {
     threads.emplace_back(std::async(std::launch::async, [&]() {
       BlockIndex index;
@@ -129,12 +132,14 @@ bool EverFreeIntegrator::blockWiseUpdateEverFree(
         tsdf_voxel.last_lidar_occupied == frame_counter) {
       updateOccupancyCounter(tsdf_voxel, frame_counter);
     }
+    // TODO ??? why <
     if (tsdf_voxel.last_lidar_occupied <
         frame_counter - config_.temporal_buffer) {
       tsdf_voxel.dynamic = false;
     }
 
     // Call to remove ever-free if warranted.
+    // Hatori: 连续长时间占据判定为稳定静态voxel，阈值为150。清除voxel everfree 并删除voxel不再更新
     if (tsdf_voxel.occ_counter >= config_.counter_to_reset &&
         tsdf_voxel.ever_free) {
       const VoxelIndex voxel_index =
@@ -151,6 +156,13 @@ bool EverFreeIntegrator::blockWiseUpdateEverFree(
 
 void EverFreeIntegrator::blockWiseMakeEverFree(const BlockIndex& block_index,
                                                const int frame_counter) const {
+  /*
+    标记为ever-free的条件是：
+      该voxel未被标记为ever-free。
+      该voxel的权重大于1e-6。
+      该voxel在过去的burn_in_period帧中没有被占据。
+      该voxel的邻居中没有未被观察到或被占据的voxel。
+  */                                                
   TsdfBlock::Ptr tsdf_block = tsdf_layer_->getBlockPtrByIndex(block_index);
   if (!tsdf_block) {
     return;

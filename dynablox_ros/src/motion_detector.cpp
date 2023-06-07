@@ -120,6 +120,9 @@ void MotionDetector::setupRos() {
                                  &MotionDetector::pointcloudCallback, this);
 }
 
+
+
+// 入口。整个代码虽然复杂，但风格规范、结构清晰
 void MotionDetector::pointcloudCallback(
     const sensor_msgs::PointCloud2::Ptr& msg) {
   Timer frame_timer("frame");
@@ -160,19 +163,23 @@ void MotionDetector::pointcloudCallback(
 
 
   // Clustering.
+  // Hatori: 以voxel为单位对动态voxel进行聚类
   Timer clustering_timer("motion_detection/clustering");
   Clusters clusters = clustering_->performClustering(
       point_map, occupied_ever_free_voxel_indices, frame_counter_, cloud,
       cloud_info);
   clustering_timer.Stop();
 
+
   // Tracking.
   Timer tracking_timer("motion_detection/tracking");
   tracking_->track(cloud, clusters, cloud_info);
   tracking_timer.Stop();
 
+
   // Integrate ever-free information.
   Timer update_ever_free_timer("motion_detection/update_ever_free");
+  // Hatori：主要做1.去除稳定占据voxel的free状态 2.更新新变为free的voxel状态
   ever_free_integrator_->updateEverFreeVoxels(frame_counter_);
   update_ever_free_timer.Stop();
 
@@ -184,6 +191,8 @@ void MotionDetector::pointcloudCallback(
   tsdf_timer.Stop();
   detection_timer.Stop();
 
+
+  // 似乎是测试用函数和可视化部分，先不看了
   // Evaluation if requested.
   if (config_.evaluate) {
     Timer eval_timer("evaluation");
